@@ -8,12 +8,12 @@
 
 #define NORMAL_MODE_S  0xc001
 #define SET_MODE_S     0x4000
-#define CYCLE          250
+#define CYCLE          25000000
 #define KBT_SET        0x8        
 #define KBT_HOUR       0x4
 #define KBT_MIN        0x2
 #define KBT_SEC        0x1
-#define BTN_ADDR       0xf024
+#define BTN_ADDR       0xfffff024
 
 ##s0, number
 ##s1, number adress 
@@ -67,7 +67,7 @@ test_finish:
     and   k0, k0, t0       # Set IE bit to 0
     mtc0  k0, CP0_STATUS     
     # -- Interrupt Off --
-    addi  t0, zero, 7  
+    addi  t0, zero, 4  
     mtc0  t0, CP0_COUNT  
     # -- judge the type of Interrupt --
     mfc0  k1, CP0_CAUSE
@@ -78,15 +78,17 @@ test_finish:
     andi  t1, k1, 0x4000
     bne   t1, zero, set_mode
     nop
-    b     1b
+    mfc0  k0, CP0_EPC
+    jr    k0
     nop
     
 
 handle_finish:
-    mfc0   ra, CP0_EPC
+    mtc0   zero, CP0_COUNT
+clk_return:
+    mtc0   k0,   CP0_STATUS
     jr     ra
     nop
-
 
 time_irq:
     # load the address of num confreg
@@ -95,33 +97,24 @@ time_irq:
     jal    convert
     nop
     nop
-    nop
     sw     k0,   0(k1)
     # Reset
     li     k0,   CYCLE
     mtc0   k0,   CP0_COMPARE
     mtc0   zero, CP0_CAUSE
+    mfc0   ra,   CP0_EPC
     li     k0,   NORMAL_MODE_S
-    mtc0   k0,   CP0_STATUS
-    j      handle_finish
+    j      clk_return
     nop
     nop
 
 set_mode:
     mtc0   zero, CP0_COUNT
-    li     k0,   CYCLE
-    mtc0   k0,   CP0_COMPARE
     mtc0   zero, CP0_CAUSE
-#    mfc0   k1,   CP0_STATUS
-#    xori   k1,   SET_OPEN  
-    # k1 == 0  => CP0_STATUS is already in set mode, 
-    # change it to normal mode
-#   beq    k1,   zero, c_to_normal
-    # k1 != 0  => CP0_STATUS is in normal mode
-    # change it to set mode
     li     k0,   CYCLE
     mtc0   k0,   CP0_COMPARE
-#   li     k0,   SET_MODE_S
+
+# wait for set-key button to disappear
 set_delay:
     mfc0   k0,   CP0_CAUSE
     andi   k0,   0x4000
@@ -130,43 +123,42 @@ set_delay:
     nop
     nop
 d1:
-    li     t0,  10     #delay from 100000
-    addi   t0,  -1
-    bne    t0, zero, d1
+    li     t0, 5000000
+d2:
+    addi   t0, -1
+    bne    t0, zero, d2
     nop
-
 read:
     li     t1, BTN_ADDR
     lw     k0, 0(t1)
-    beq    k0, zero, read
+    beq    k0, zero, read      # if equal to 0, no button is touched
     nop
-    li     t2, KBT_SET          # load the kbt value of SET
-    beq    k0, t2, c_to_normal  # if equal again, return 
+    li     t2, KBT_HOUR        # load the value of hour KBT 
+    beq    k0, t2, h_1_jal     # if equal, then go to hour+1
     nop
-    li     t2, KBT_HOUR
-    beq    k0, t2, h_1_jal
+    li     t2, KBT_MIN         # load the value of minite KBT
+    beq    k0, t2, m_1_jal     # if equal, then go to minite+1
     nop
-    li     t2, KBT_MIN
-    beq    k0, t2, m_1_jal
+    li     t2, KBT_SEC         # load the value of second KBT
+    beq    k0, t2, s_1_jal     # if equal, then go to second+1
     nop
-    li     t2, KBT_SEC
-    beq    k0, t2, s_1_jal
+    li     t2, KBT_SET         # load the kbt value of SET
+    beq    k0, t2, c_to_normal # if equal again, go to wait set KBT disappear
     nop
-    j      d1
+    j      d1                  # Otherwise, keep reading
     nop
 
 c_to_normal:
-    mfc0   k0,   CP0_CAUSE
-    andi   k0,   0x4000
-    xori   k0,   0x4000
-    beq    k0,   zero, c_to_normal
-    nop
-    nop    
+    li     t2, KBT_SET
+    li     t1, BTN_ADDR
+    lw     t1, 0(t1)
+    beq    t1, t2, c_to_normal
+    nop  
     li     k0,   CYCLE
     mtc0   k0,   CP0_COMPARE
-    li     k0,   NORMAL_MODE_S
-    mtc0   zero, CP0_COUNT
-    mtc0   k0,   CP0_STATUS    
+    mtc0   zero, CP0_CAUSE
+    mfc0   ra,   CP0_EPC
+    li     k0,   NORMAL_MODE_S  
     j      handle_finish  
     nop
 
@@ -192,82 +184,6 @@ s_1_jal:
     li     t0, NUM_ADDR
     sw     k0, 0(t0)
     j      d1
-    nop
-
-
-h_add:
-    # load the address of num confreg
-    li     k1,  NUM_ADDR
-    lw     k0,  0(k1) 
-    jal    hour_1
-    nop
-    nop
-    nop
-xun:
-    li     t0,  WAIT_C
-    addi   t0, -1
-    bne    t0, zero,xun
-    nop
-    nop
-    sw     k0,   0(k1)
-    # Clear Clock Interrupt
-    li     k0,   CYCLE
-    mtc0   k0,   CP0_COMPARE
-    mtc0   zero, CP0_CAUSE
-    li     k0,   NORMAL_MODE_S
-    mtc0   k0,   CP0_STATUS
-    j      handle_finish
-    nop
-    nop
-
-m_add:
-    # load the address of num confreg
-    li     k1,   NUM_ADDR
-    lw     k0,   0(k1)
-    jal    minute_1    
-    nop
-    nop
-xu:
-    li     t0,  WAIT_C
-    addi   t0, -1
-    bne    t0, zero,xu
-    nop
-    nop
-    nop
-    sw     k0,   0(k1)
-    # Clear Clock Interrupt
-    li     k0,   CYCLE
-    mtc0   k0,   CP0_COMPARE
-    mtc0   zero, CP0_CAUSE
-    li     k0,   NORMAL_MODE_S
-    mtc0   k0,   CP0_STATUS
-    j      handle_finish
-    nop
-    nop
-
-s_add:
-    # load the address of num confreg
-    li     k1,   NUM_ADDR
-    lw     k0,   0(k1)
-    jal    second_1
-    nop
-    nop
-xunhuan:
-    li     t0,  WAIT_C
-    addi   t0, -1
-    bne    t0, zero, xunhuan
-    nop
-    nop
-    nop
-    sw     k0,   0(k1)
-    # Clear Clock Interrupt
-    li     k0,   CYCLE
-    mtc0   k0,   CP0_COMPARE
-    mtc0   zero, CP0_CAUSE
-    li     k0,   NORMAL_MODE_S
-    mtc0   k0,   CP0_STATUS
-    j      handle_finish
-    nop
     nop
 
 convert:
@@ -351,11 +267,10 @@ hourhi_co:
     .set noreorder
     bne   s2, t5, ret_to_ra
     nop
-    li    s0, -1572864
+    li    s0, -2359296
     add   k0, k0, s0      #set hour to zero
     j     ret_to_ra 
     nop
-    b   1b
     nop
     
 ret_to_ra:
@@ -363,8 +278,7 @@ ret_to_ra:
     jr ra
     nop
     nop
-    b   1b
-    nop
+
 
 hour_1:
     .set noreorder
